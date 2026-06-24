@@ -22,9 +22,8 @@ with zero third-party dependencies.
 
 ## Install
 
-```yaml
-dependencies:
-  sileo: ^0.0.2
+```sh
+flutter pub add sileo
 ```
 
 ## Usage
