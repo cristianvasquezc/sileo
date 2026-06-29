@@ -400,12 +400,7 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
 
   /* ------------------------------- Content ------------------------------- */
 
-  String _resolvedTitle() => _capitalize(_vTitle ?? _vState.name);
-
-  static String _capitalize(String s) => s
-      .split(' ')
-      .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
-      .join(' ');
+  String _resolvedTitle() => _vTitle ?? _vState.name;
 
   TextStyle _titleStyle() => TextStyle(
     fontSize: 13.2,
@@ -420,8 +415,7 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
   /// OLD content. If the header (state + title) actually changes, snapshots the
   /// old header as the outgoing layer and (re)starts the cross-fade.
   void _maybeCrossfadeHeader() {
-    final nextKey =
-        '${widget.state.name}-${_capitalize(widget.title ?? widget.state.name)}';
+    final nextKey = '${widget.state.name}-${widget.title ?? widget.state.name}';
     if (nextKey == _headerKey) return;
     _prevHeaderInner = _buildHeaderInner(); // built from the OLD _v*
     _headerKey = nextKey;
