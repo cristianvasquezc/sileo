@@ -1,6 +1,7 @@
 ## 0.0.5
 
 - Tap a toast to reveal its description.
+- Add responsive toast width for narrow screens. Thanks [@cristianvasquezc](https://github.com/cristianvasquezc)!
 
 ## 0.0.3
 
