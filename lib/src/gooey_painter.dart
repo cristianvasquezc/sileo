@@ -90,6 +90,10 @@ class SileoGooeyPainter extends CustomPainter {
   }
 
   @override
+  bool hitTest(Offset position) =>
+      pill.contains(position) || (body.height > 0.5 && body.contains(position));
+
+  @override
   bool shouldRepaint(SileoGooeyPainter old) =>
       old.pill != pill ||
       old.body != body ||

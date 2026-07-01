@@ -558,6 +558,7 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
         liveRegion: true,
         label: _semanticsLabel(),
         child: MouseRegion(
+          opaque: false,
           onEnter: (_) {
             if (widget.exiting) return;
             widget.onMouseEnter?.call();
