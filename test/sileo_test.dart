@@ -287,4 +287,116 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 700)); // drain exit timers
   });
+
+  group('swipe-to-dismiss', () {
+    // The default Toaster position is topRight, so a toast dismisses by being
+    // swiped *up* (toward the edge it hugs). `duration: null` persists it with
+    // no auto-dismiss timer and no body, isolating the swipe gesture.
+
+    testWidgets('a drag past the threshold dismisses the toast', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_app());
+      sileo.success(const SileoOptions(title: 'Swipe Me', duration: null));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(find.text('Swipe Me'), findsOneWidget);
+
+      // Up and well past kSileoSwipeDismiss (36); a plain drag releases with
+      // ~zero velocity, so this exercises the distance path.
+      await tester.drag(find.text('Swipe Me'), const Offset(0, -60));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700)); // throw + removal
+      expect(find.text('Swipe Me'), findsNothing);
+    });
+
+    testWidgets('a short slow drag springs back and keeps the toast', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_app());
+      sileo.success(const SileoOptions(title: 'Stay', duration: null));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      // Under the distance threshold, released slowly: springs back, no dismiss.
+      await tester.drag(find.text('Stay'), const Offset(0, -15));
+      await _settle(tester);
+      expect(
+        find.text('Stay'),
+        findsOneWidget,
+        reason: 'a sub-threshold drag springs back',
+      );
+    });
+
+    testWidgets('a fast flick dismisses below the distance threshold', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_app());
+      sileo.success(const SileoOptions(title: 'Flick', duration: null));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      // A short, fast upward flick: total travel 30px stays under the distance
+      // threshold (36), so a dismissal can only come from the velocity path.
+      // Drive the pointer by hand with explicit, increasing event timestamps —
+      // `tester.fling`/`TestGesture` default every event to timeStamp 0, which
+      // makes the velocity tracker report 0. 30px over 40ms ≈ 750px/s, well past
+      // kSileoSwipeVelocity (340).
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('Flick')),
+      );
+      for (var i = 1; i <= 5; i++) {
+        await gesture.moveBy(
+          const Offset(0, -6),
+          timeStamp: Duration(milliseconds: 8 * i),
+        );
+      }
+      await gesture.up(timeStamp: const Duration(milliseconds: 48));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(find.text('Flick'), findsNothing);
+    });
+
+    testWidgets('dragging against the dismiss direction never dismisses', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_app());
+      sileo.success(const SileoOptions(title: 'Wrong Way', duration: null));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      // A top toast pulled *down* rubber-bands and can never dismiss, however
+      // far it is dragged.
+      await tester.drag(find.text('Wrong Way'), const Offset(0, 120));
+      await _settle(tester);
+      expect(
+        find.text('Wrong Way'),
+        findsOneWidget,
+        reason: 'the wrong direction rubber-bands, never dismisses',
+      );
+    });
+
+    testWidgets('a bottom toast dismisses in the opposite (downward) direction', (
+      tester,
+    ) async {
+      // A bottom-anchored toast hugs the bottom edge, so its dismiss direction
+      // flips: it is thrown *down*, not up — covering _dismissSign for isBottom.
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) =>
+              Toaster(position: SileoPosition.bottomCenter, child: child),
+          home: const Scaffold(body: SizedBox.expand()),
+        ),
+      );
+      sileo.success(const SileoOptions(title: 'Bottom', duration: null));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(find.text('Bottom'), findsOneWidget);
+
+      await tester.drag(find.text('Bottom'), const Offset(0, 60));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(find.text('Bottom'), findsNothing);
+    });
+  });
 }

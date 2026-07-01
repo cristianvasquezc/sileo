@@ -1,3 +1,9 @@
+## 0.0.6
+
+- Swipe-to-dismiss now tracks the finger and dismisses on a flick or a drag past
+  the threshold, with a spring throw-off, a snap-back when released short, and
+  rubber-band resistance against the wrong direction.
+
 ## 0.0.5
 
 - Tap a toast to reveal its description.

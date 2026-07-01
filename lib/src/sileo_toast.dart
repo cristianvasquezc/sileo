@@ -154,9 +154,19 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
   bool _reduceMotion = false;
   double _contentHeight = 0;
 
-  // Swipe.
+  // Swipe: a spring-driven vertical offset. During a drag it tracks the finger
+  // (set imperatively); on release it either springs back to rest or is thrown
+  // off-screen toward the dismiss edge.
+  late final AnimationController _swipe = AnimationController.unbounded(
+    vsync: this,
+  );
+
+  /// Accumulated raw finger travel for the active drag (unclamped, signed).
   double _dragRaw = 0;
-  double _dragShown = 0;
+
+  /// True once a swipe has committed to dismissal, so the exit lifecycle lets
+  /// the throw-off carry the toast out instead of playing the slide-back exit.
+  bool _dismissingBySwipe = false;
 
   Timer? _expandTimer;
   Timer? _collapseTimer;
@@ -237,14 +247,26 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
       _collapseTimer?.cancel();
       _swapTimer?.cancel();
       _setExpanded(false);
-      if (_reduceMotion) {
-        _entry.value = 0;
-      } else {
-        _entry.reverse();
+      if (!_dismissingBySwipe) {
+        // A store-driven exit (auto-dismiss / clear) can land mid-drag, when the
+        // gesture recognizer is torn down without an end event — settle any
+        // frozen swipe offset back to rest so the slide-back exit isn't shifted.
+        _settleSwipe(0, 0);
+        if (_reduceMotion) {
+          _entry.value = 0;
+        } else {
+          _entry.reverse();
+        }
       }
     } else if (!widget.exiting && old.exiting) {
       // This State was reused for a fresh toast (a same-slot re-create can
-      // recycle an exiting element by key) — replay the entry so it's visible.
+      // recycle an exiting element by key) — reset the swipe and replay the
+      // entry so it's visible.
+      _dismissingBySwipe = false;
+      _dragRaw = 0;
+      _swipe
+        ..stop()
+        ..value = 0;
       if (_reduceMotion) {
         _entry.value = 1;
       } else {
@@ -263,6 +285,7 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
     _entryCurve.dispose();
     _headerEnterCurve.dispose();
     _headerExitCurve.dispose();
+    _swipe.dispose();
     _pillWidth.dispose();
     _bodyHeight.dispose();
     _bodyOpacity.dispose();
@@ -439,6 +462,82 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
     }
   }
 
+  /* -------------------------------- Swipe -------------------------------- */
+
+  /// Sign of the dismiss direction: bottom toasts throw *down* (`+1`), top
+  /// toasts throw *up* (`-1`) — always toward the screen edge they hug.
+  double get _dismissSign => widget.expandUp ? 1.0 : -1.0;
+
+  /// Maps raw finger travel to the shown offset. Motion toward the dismiss edge
+  /// tracks the finger 1:1 (so the toast can follow all the way off-screen);
+  /// motion the other way rubber-bands toward [kSileoSwipeResist] and can never
+  /// dismiss — a soft give instead of a dead wall.
+  double _resistSwipe(double raw) {
+    if (raw * _dismissSign >= 0) return raw;
+    final resisted =
+        kSileoSwipeResist * (1 - math.exp(-raw.abs() / kSileoSwipeResist));
+    return raw.sign * resisted;
+  }
+
+  /// Springs the swipe offset to [target] carrying the release [velocity]
+  /// (snaps immediately under reduced motion).
+  void _settleSwipe(double target, double velocity) {
+    if (_reduceMotion) {
+      _swipe
+        ..stop()
+        ..value = target;
+      return;
+    }
+    _swipe.animateWith(
+      SpringSimulation(kSileoSpringSwipe, _swipe.value, target, velocity),
+    );
+  }
+
+  void _onSwipeStart() {
+    _swipe.stop();
+    // Re-attach the finger to wherever the offset currently rests (exact in the
+    // 1:1 dismiss direction; a close-enough approximation the resisted way).
+    _dragRaw = _swipe.value;
+  }
+
+  void _onSwipeUpdate(double dy) {
+    _dragRaw += dy;
+    _swipe
+      ..stop()
+      ..value = _resistSwipe(_dragRaw);
+  }
+
+  /// On release, decide between dismissal and snap-back. Dismiss when the toast
+  /// was dragged past [kSileoSwipeDismiss] in the dismiss direction, or flicked
+  /// past [kSileoSwipeVelocity] that way — then throw it off-screen and hand off
+  /// to the store. Otherwise spring it back to rest.
+  void _onSwipeEnd(double velocity) {
+    final progress = _swipe.value * _dismissSign; // px toward the dismiss edge
+    final flickedOut = velocity * _dismissSign > kSileoSwipeVelocity;
+    // A flick counts unless the toast ended up clearly on the wrong side of rest
+    // — the offset can only rubber-band a wrong-way drag as far as
+    // kSileoSwipeResist, so that bounds the tolerance (and lets a fast
+    // down-then-up flick still dismiss).
+    final dismiss =
+        progress > kSileoSwipeDismiss ||
+        (flickedOut && progress > -kSileoSwipeResist);
+
+    _dragRaw = 0;
+    if (dismiss) {
+      _dismissingBySwipe = true;
+      // Throw it clear of its own footprint — past the fade span and its full
+      // height — so it reads as flying off the edge, not fading in place.
+      _settleSwipe(
+        _dismissSign *
+            (kSileoHeight + _bodyHeight.value + kSileoSwipeFadeDistance),
+        velocity,
+      );
+      widget.onDismiss?.call();
+    } else {
+      _settleSwipe(0, velocity);
+    }
+  }
+
   /* ------------------------------- Content ------------------------------- */
 
   String _resolvedTitle() => _capitalize(_vTitle ?? _vState.name);
@@ -579,24 +678,12 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
             onTap: _hasDesc && !widget.exiting && !_isLoading
                 ? _handleTap
                 : null,
+            onVerticalDragStart: canSwipe ? (_) => _onSwipeStart() : null,
             onVerticalDragUpdate: canSwipe
-                ? (d) {
-                    _dragRaw += d.delta.dy;
-                    setState(() {
-                      _dragShown = _dragRaw.clamp(
-                        -kSileoSwipeMax,
-                        kSileoSwipeMax,
-                      );
-                    });
-                  }
+                ? (d) => _onSwipeUpdate(d.delta.dy)
                 : null,
             onVerticalDragEnd: canSwipe
-                ? (_) {
-                    final dismiss = _dragRaw.abs() > kSileoSwipeDismiss;
-                    _dragRaw = 0;
-                    setState(() => _dragShown = 0);
-                    if (dismiss) widget.onDismiss?.call();
-                  }
+                ? (d) => _onSwipeEnd(d.velocity.pixelsPerSecond.dy)
                 : null,
             child: AnimatedBuilder(
               animation: Listenable.merge(<Listenable>[
@@ -605,6 +692,7 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
                 _bodyOpacity,
                 _pillBump,
                 _entryCurve,
+                _swipe,
               ]),
               builder: (context, _) => _buildBody(),
             ),
@@ -631,7 +719,16 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
 
     final e = _entryCurve.value;
     final start = widget.expandUp ? kSileoEntryOffset : -kSileoEntryOffset;
-    final translateY = ui.lerpDouble(start, 0, e)! + _dragShown;
+    final swipe = _swipe.value;
+    final translateY = ui.lerpDouble(start, 0, e)! + swipe;
+
+    // Fade only with motion *toward* the dismiss edge: a small dim while dragging
+    // to threshold, reaching transparent as a dismissing throw carries the toast
+    // past the fade span. A wrong-way (rubber-banded) drag keeps full opacity, so
+    // the toast never dims while the gesture is being refused.
+    final towardDismiss = math.max(0.0, swipe * _dismissSign);
+    final swipeFade =
+        (1 - towardDismiss / kSileoSwipeFadeDistance).clamp(0.0, 1.0);
 
     final paper = RepaintBoundary(
       child: CustomPaint(
@@ -647,7 +744,7 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
     );
 
     return Opacity(
-      opacity: e.clamp(0.0, 1.0),
+      opacity: e.clamp(0.0, 1.0) * swipeFade,
       child: Transform.translate(
         offset: Offset(0, translateY),
         child: Transform.scale(
@@ -826,11 +923,9 @@ class _SileoActionButtonState extends State<_SileoActionButton> {
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         onTap: widget.button.onPressed,
-        // Claim vertical drags so a drag starting on the button doesn't bubble
-        // up and dismiss the toast.
-        onVerticalDragStart: (_) {},
-        onVerticalDragUpdate: (_) {},
-        onVerticalDragEnd: (_) {},
+        // Only the tap is claimed — a vertical *drag* starting on the button
+        // falls through to the toast's swipe-to-dismiss, so the whole surface is
+        // swipeable while a stationary tap still presses the button.
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           height: 28,

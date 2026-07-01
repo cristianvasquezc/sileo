@@ -67,11 +67,23 @@ const double kSileoMinExpandRatio = 2.25;
 
 /* --------------------------------- Swipe ---------------------------------- */
 
-/// Drag distance (px) past which a swipe dismisses the toast.
-const double kSileoSwipeDismiss = 30;
+/// Drag distance (px), in the dismiss direction, past which releasing the toast
+/// dismisses it. Below this, a slow release springs the toast back to rest.
+const double kSileoSwipeDismiss = 36;
 
-/// Maximum visual drag offset (px) while swiping.
-const double kSileoSwipeMax = 20;
+/// Flick speed (px/s), in the dismiss direction, past which releasing dismisses
+/// the toast regardless of how far it was dragged — a quick flick throws it off.
+const double kSileoSwipeVelocity = 340;
+
+/// Distance (px) over which the toast fades from fully opaque to transparent as
+/// it is dragged toward dismissal. Tuned so a drag to [kSileoSwipeDismiss] only
+/// dims it slightly, while a fling carries it past this and fully out.
+const double kSileoSwipeFadeDistance = 180;
+
+/// Soft asymptote (px) for dragging *against* the dismiss direction: the toast
+/// rubber-bands toward this limit instead of following the finger, so it never
+/// dismisses the wrong way and there is no hard wall.
+const double kSileoSwipeResist = 24;
 
 /* -------------------------------- Springs --------------------------------- */
 
@@ -94,4 +106,15 @@ final SpringDescription kSileoSpringClose = SpringDescription.withDampingRatio(
   mass: 1,
   stiffness: 236.822,
   ratio: 1.0,
+);
+
+/// Drives the swipe offset both ways: the snap-back when a drag is released
+/// below threshold (a lively, barely-overshooting settle to rest) and the
+/// throw-off when a swipe dismisses (the same spring pulling toward a far
+/// off-screen target, carrying the release velocity). Slightly under-damped so
+/// the snap-back feels rubbery rather than mechanical.
+final SpringDescription kSileoSpringSwipe = SpringDescription.withDampingRatio(
+  mass: 1,
+  stiffness: 260,
+  ratio: 0.82,
 );
