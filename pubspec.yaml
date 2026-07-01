@@ -1,6 +1,6 @@
 name: sileo
 description: 'An opinionated, physics-based toast component for Flutter'
-version: 0.0.3
+version: 0.0.5
 homepage: https://github.com/KhaleelSH/sileo
 repository: https://github.com/KhaleelSH/sileo
 issue_tracker: https://github.com/KhaleelSH/sileo/issues

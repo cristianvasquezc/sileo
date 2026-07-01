@@ -16,7 +16,7 @@ import 'spring.dart';
 ///
 /// Responsible for: the spring-animated morph geometry (pill width, body
 /// height/opacity), the gooey paper, the header icon+title with a blur
-/// cross-fade, the expandable body, entry/exit, hover-to-expand, the
+/// cross-fade, the expandable body, entry/exit, hover- and tap-to-expand, the
 /// collapse-then-swap on content change, and swipe-to-dismiss.
 class SileoToast extends StatefulWidget {
   const SileoToast({
@@ -39,6 +39,7 @@ class SileoToast extends StatefulWidget {
     this.autoCollapseDelay,
     this.onMouseEnter,
     this.onMouseLeave,
+    this.onTapped,
     this.onDismiss,
   });
 
@@ -65,8 +66,19 @@ class SileoToast extends StatefulWidget {
   final bool exiting;
   final Duration? autoExpandDelay;
   final Duration? autoCollapseDelay;
+
+  /// Pointer entered (hover): the host marks this the active toast and pauses
+  /// every auto-dismiss timer while the pointer rests on it.
   final VoidCallback? onMouseEnter;
+
+  /// Pointer left (hover): the host restores the newest toast and resumes.
   final VoidCallback? onMouseLeave;
+
+  /// The toast was tapped open. Unlike [onMouseEnter] this does not pause
+  /// auto-dismiss; the host makes this toast active and restarts its dismiss
+  /// countdown for a fresh reading window — unless a hover is already pausing
+  /// the timers, in which case the hover pause takes precedence.
+  final VoidCallback? onTapped;
   final VoidCallback? onDismiss;
 
   @override
@@ -367,6 +379,35 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
     _applyOpen();
   }
 
+  /// Tap toggles the body open/closed. Opening reveals the description and —
+  /// unlike a hover — does *not* pause auto-dismiss: it restarts the collapse
+  /// countdown here and the dismiss countdown in the host (via [onTapped]), so
+  /// the toast still closes and hides itself after a fresh reading window.
+  void _handleTap() {
+    if (widget.exiting || !_hasDesc || _isLoading) return;
+    if (_isExpanded) {
+      _collapseTimer?.cancel();
+      _setExpanded(false);
+    } else {
+      widget.onTapped?.call();
+      _setExpanded(true);
+      _restartAutoCollapse();
+    }
+  }
+
+  /// Restarts the auto-collapse countdown so a tapped-open toast closes its
+  /// body after [autoCollapseDelay]. A no-op when autopilot is off (the toast
+  /// then stays open until it's tapped closed, dismissed, or swiped away).
+  void _restartAutoCollapse() {
+    _collapseTimer?.cancel();
+    final collapse = widget.autoCollapseDelay;
+    if (collapse != null && collapse > Duration.zero) {
+      _collapseTimer = Timer(collapse, () {
+        if (mounted) _setExpanded(false);
+      });
+    }
+  }
+
   void _runAutopilot() {
     _expandTimer?.cancel();
     _collapseTimer?.cancel();
@@ -529,6 +570,9 @@ class _SileoToastState extends State<SileoToast> with TickerProviderStateMixin {
           },
           child: GestureDetector(
             behavior: HitTestBehavior.deferToChild,
+            onTap: _hasDesc && !widget.exiting && !_isLoading
+                ? _handleTap
+                : null,
             onVerticalDragUpdate: canSwipe
                 ? (d) {
                     _dragRaw += d.delta.dy;

@@ -1,3 +1,7 @@
+## 0.0.5
+
+- Tap a toast to reveal its description.
+
 ## 0.0.3
 
 - Fix preview image URL in README.

@@ -7,6 +7,13 @@ Widget _app() => MaterialApp(
   home: const Scaffold(body: SizedBox.expand()),
 );
 
+Future<void> _settle(WidgetTester tester, {int frames = 120}) async {
+  await tester.pump();
+  for (var i = 0; i < frames; i++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+}
+
 void main() {
   tearDown(() => sileo.clear());
 
@@ -57,6 +64,126 @@ void main() {
     await tester.pump(const Duration(milliseconds: 700));
 
     expect(find.text('Bye'), findsNothing);
+  });
+
+  testWidgets('tapping a toast reveals then hides its description', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app());
+    // A zero duration persists the toast and disables autopilot, so it stays
+    // collapsed until the user interacts — isolating the tap behaviour.
+    sileo.info(
+      const SileoOptions(
+        title: 'Update',
+        description: 'Version 2.0 is now available.',
+        duration: Duration.zero,
+      ),
+    );
+    await _settle(tester);
+
+    final desc = find.text('Version 2.0 is now available.');
+    // The body is always in the tree; collapsed just means faded out.
+    expect(desc, findsOneWidget);
+
+    // Combined opacity of the body along its ancestor chain — the entry fade
+    // times the open fade. Near 0 while collapsed, near 1 while open.
+    double bodyOpacity() => tester
+        .widgetList<Opacity>(
+          find.ancestor(of: desc, matching: find.byType(Opacity)),
+        )
+        .fold<double>(1, (acc, o) => acc * o.opacity);
+
+    expect(bodyOpacity(), lessThan(0.5), reason: 'starts collapsed');
+
+    // Tap the visible pill (its title) to open it.
+    await tester.tap(find.text('Update'), warnIfMissed: false);
+    await _settle(tester);
+    expect(bodyOpacity(), greaterThan(0.5), reason: 'tap reveals the body');
+
+    // Tap again to collapse.
+    await tester.tap(find.text('Update'), warnIfMissed: false);
+    await _settle(tester);
+    expect(bodyOpacity(), lessThan(0.5), reason: 'a second tap hides it');
+  });
+
+  testWidgets('tapping restarts the dismiss timer but never pauses it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app());
+    // Autopilot off so nothing auto-expands; a 2s duration gives a live dismiss
+    // timer. Title matches the per-word capitalisation the toast renders.
+    sileo.info(
+      const SileoOptions(
+        title: 'Heads Up',
+        description: 'Something you should read.',
+        duration: Duration(seconds: 2),
+        autopilot: SileoAutopilot.disabled(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    // Let 1.5s pass (the original 2s timer has not fired), then tap — this
+    // cancels it and starts a fresh 2s countdown from now.
+    await tester.pump(const Duration(milliseconds: 1500));
+    await tester.tap(find.text('Heads Up'), warnIfMissed: false);
+    await tester.pump();
+
+    // 1.5s past the tap: within the fresh window, still on screen — where the
+    // ORIGINAL timer would already have dismissed it (3.0s elapsed > 2s).
+    await tester.pump(const Duration(milliseconds: 1500));
+    expect(
+      find.text('Heads Up'),
+      findsOneWidget,
+      reason: 'the tap restarted the countdown',
+    );
+
+    // Past the fresh window: it dismisses on its own — the tap did not pause it.
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump(const Duration(milliseconds: 700)); // exit animation
+    expect(
+      find.text('Heads Up'),
+      findsNothing,
+      reason: 'tapping does not pause auto-dismiss',
+    );
+  });
+
+  testWidgets('tapping the action button fires it without collapsing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app());
+    var pressed = false;
+    sileo.action(
+      SileoOptions(
+        title: 'File Uploaded',
+        description: 'Share it with your team?',
+        duration: Duration.zero,
+        button: SileoButton(
+          title: 'Share Now',
+          onPressed: () => pressed = true,
+        ),
+      ),
+    );
+    await _settle(tester);
+
+    // Open the toast so the button is on screen.
+    await tester.tap(find.text('File Uploaded'), warnIfMissed: false);
+    await _settle(tester);
+
+    final desc = find.text('Share it with your team?');
+    double bodyOpacity() => tester
+        .widgetList<Opacity>(
+          find.ancestor(of: desc, matching: find.byType(Opacity)),
+        )
+        .fold<double>(1, (acc, o) => acc * o.opacity);
+    expect(bodyOpacity(), greaterThan(0.5), reason: 'opened');
+
+    // Tapping the button fires it — the inner gesture wins the arena, so the
+    // tap does not bubble up and collapse the toast.
+    await tester.tap(find.text('Share Now'), warnIfMissed: false);
+    await _settle(tester);
+    expect(pressed, isTrue, reason: 'button pressed');
+    expect(bodyOpacity(), greaterThan(0.5), reason: 'toast stayed open');
   });
 
   testWidgets('distinct ids stack multiple toasts', (tester) async {
